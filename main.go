@@ -1,7 +1,21 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"weather-cli/internal/config"
+)
 
 func main() {
-	fmt.Println("Happy coding!!!")
+	cfg, err := config.Load()
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("Default city: %s\n", cfg.DefaultCity)
+
+	cfg.DefaultCity = "Novosibirsk"
+	err = config.Save(cfg)
+	if err != nil {
+		panic(err)
+	}
 }
