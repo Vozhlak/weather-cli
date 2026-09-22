@@ -1,10 +1,12 @@
 package openmeteo
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"weather-cli/internal/domain"
@@ -44,7 +46,19 @@ type forecastCurrent struct {
 	Precipitation       float64 `json:"precipitation"`
 }
 
-func geocode(city string) (name string, lat, lon float64, err error) {
+type Client struct {
+	HTTPClient *http.Client
+}
+
+func NewClient() *Client {
+	return &Client{
+		HTTPClient: &http.Client{
+			Timeout: time.Second * 5,
+		},
+	}
+}
+
+func (c *Client) geocode(ctx context.Context, city string) (name string, lat, lon float64, err error) {
 	if city == "" {
 		return "", 0, 0, fmt.Errorf("город не указан")
 	}
@@ -57,7 +71,12 @@ func geocode(city string) (name string, lat, lon float64, err error) {
 
 	requestURL := geocodingURL + "?" + params.Encode()
 
-	resp, err := http.Get(requestURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+	if err != nil {
+		return "", 0, 0, err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return "", 0, 0, err
 	}
@@ -68,7 +87,9 @@ func geocode(city string) (name string, lat, lon float64, err error) {
 	}
 
 	var data geocodingResponse
-	json.NewDecoder(resp.Body).Decode(&data)
+	if err = json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return "", 0, 0, err
+	}
 
 	if len(data.Results) == 0 {
 		return "", 0, 0, fmt.Errorf("город не найден: %s", city)
@@ -89,33 +110,59 @@ func geocode(city string) (name string, lat, lon float64, err error) {
 	return name, result.Latitude, result.Longitude, nil
 }
 
-func getCurrentWeather(lat, lon float64) (domain.Today, error) {
+func (c *Client) forecast(ctx context.Context, lat, lon float64, days int) (*forecastResponse, error) {
 	params := url.Values{}
 	params.Set("latitude", fmt.Sprintf("%f", lat))
 	params.Set("longitude", fmt.Sprintf("%f", lon))
 	params.Set("timezone", "auto")
 	params.Set("wind_speed_unit", "ms")
+	params.Set("days", strconv.Itoa(days))
 	params.Set(
 		"current",
 		"temperature_2m,apparent_temperature,weather_code,"+
 			"wind_speed_10m,wind_direction_10m,relative_humidity_2m,"+
 			"surface_pressure,visibility,precipitation",
 	)
+	params.Set("hourly", "temperature_2m,precipitation_probability,windspeed_10m")
+	params.Set("daily", "temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max,weather_code")
 
 	requestURL := forecastURL + "?" + params.Encode()
-	resp, err := http.Get(requestURL)
+	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 	if err != nil {
-		return domain.Today{}, err
+		return nil, err
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return domain.Today{}, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
 	var data forecastResponse
 	if err = json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+func (c *Client) GetToday(ctx context.Context, city string) (domain.Today, error) {
+	fullCity, lat, lon, err := c.geocode(ctx, city)
+	if err != nil {
 		return domain.Today{}, err
+	}
+
+	data, err := c.forecast(ctx, lat, lon, 1)
+	if err != nil {
+		return domain.Today{}, err
+	}
+
+	if data.Current.Time == "" {
+		return domain.Today{}, fmt.Errorf("no current weather data")
 	}
 
 	updatedAt, err := time.Parse("2006-01-02T15:04", data.Current.Time)
@@ -124,6 +171,7 @@ func getCurrentWeather(lat, lon float64) (domain.Today, error) {
 	}
 
 	return domain.Today{
+		City:             fullCity,
 		TemperatureC:     data.Current.Temperature2M,
 		FeelsLikeC:       data.Current.ApparentTemperature,
 		Condition:        weatherCodeToText(data.Current.WeatherCode),
