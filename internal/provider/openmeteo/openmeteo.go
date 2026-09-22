@@ -31,6 +31,8 @@ type geocodingResult struct {
 
 type forecastResponse struct {
 	Current forecastCurrent `json:"current"`
+	Hourly  forecastHourly  `json:"hourly"`
+	Daily   forecastDaily   `json:"daily"`
 }
 
 type forecastCurrent struct {
@@ -44,6 +46,22 @@ type forecastCurrent struct {
 	SurfacePressure     float64 `json:"surface_pressure"`
 	Visibility          float64 `json:"visibility"`
 	Precipitation       float64 `json:"precipitation"`
+}
+
+type forecastHourly struct {
+	Time              []string  `json:"time"`
+	Temperature2M     []float64 `json:"temperature_2m"`
+	PrecipitationProb []int     `json:"precipitation_probability"`
+	WindSpeed10M      []float64 `json:"wind_speed_10m"`
+}
+
+type forecastDaily struct {
+	Time                 []string  `json:"time"`
+	TemperatureMax       []float64 `json:"temperature_2m_max"`
+	TemperatureMin       []float64 `json:"temperature_2m_min"`
+	PrecipitationProbMax []int     `json:"precipitation_probability_max"`
+	WindSpeedMax         []float64 `json:"wind_speed_10m_max"`
+	WeatherCode          []int     `json:"weather_code"`
 }
 
 type Client struct {
@@ -123,8 +141,8 @@ func (c *Client) forecast(ctx context.Context, lat, lon float64, days int) (*for
 			"wind_speed_10m,wind_direction_10m,relative_humidity_2m,"+
 			"surface_pressure,visibility,precipitation",
 	)
-	params.Set("hourly", "temperature_2m,precipitation_probability,windspeed_10m")
-	params.Set("daily", "temperature_2m_max,temperature_2m_min,precipitation_probability_max,windspeed_10m_max,weather_code")
+	params.Set("hourly", "temperature_2m,precipitation_probability,wind_speed_10m")
+	params.Set("daily", "temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,weather_code")
 
 	requestURL := forecastURL + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
@@ -165,7 +183,7 @@ func (c *Client) GetToday(ctx context.Context, city string) (domain.Today, error
 		return domain.Today{}, fmt.Errorf("no current weather data")
 	}
 
-	updatedAt, err := time.Parse("2006-01-02T15:04", data.Current.Time)
+	updatedAt, err := parseTime(data.Current.Time)
 	if err != nil {
 		return domain.Today{}, fmt.Errorf("parse current weather time: %w", err)
 	}
@@ -183,6 +201,100 @@ func (c *Client) GetToday(ctx context.Context, city string) (domain.Today, error
 		PrecipitationMm:  data.Current.Precipitation,
 		UpdatedAt:        updatedAt,
 	}, nil
+}
+
+func (c *Client) GetHourly(ctx context.Context, city string, hours int) ([]domain.HourlyEntry, error) {
+	_, lat, lon, err := c.geocode(ctx, city)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := c.forecast(ctx, lat, lon, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(data.Hourly.Time) == 0 {
+		return nil, fmt.Errorf("no hourly data available")
+	}
+
+	limit := hours
+	if limit > len(data.Hourly.Time) {
+		limit = len(data.Hourly.Time)
+	}
+
+	entries := make([]domain.HourlyEntry, 0, limit)
+	for i := 0; i < limit; i++ {
+		t, err := parseTime(data.Hourly.Time[i])
+		if err != nil {
+			return nil, fmt.Errorf("parse hourly time: %w", err)
+		}
+
+		entries = append(entries, domain.HourlyEntry{
+			Time:         t,
+			TemperatureC: data.Hourly.Temperature2M[i],
+			POPPercent:   data.Hourly.PrecipitationProb[i],
+			WindSpeedMS:  data.Hourly.WindSpeed10M[i],
+		})
+	}
+
+	return entries, nil
+}
+
+func (c *Client) GetDaily(ctx context.Context, city string, days int) ([]domain.DailyEntry, error) {
+	_, lat, lon, err := c.geocode(ctx, city)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := c.forecast(ctx, lat, lon, days)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(data.Daily.Time) == 0 {
+		return nil, fmt.Errorf("no daily data available")
+	}
+
+	limit := days
+	if limit > len(data.Daily.Time) {
+		limit = len(data.Daily.Time)
+	}
+
+	entries := make([]domain.DailyEntry, 0, limit)
+	for i := 0; i < limit; i++ {
+		t, err := parseTime(data.Daily.Time[i])
+		if err != nil {
+			return nil, fmt.Errorf("parse daily time: %w", err)
+		}
+
+		entries = append(entries, domain.DailyEntry{
+			Date:        t,
+			TempMinC:    data.Daily.TemperatureMin[i],
+			TempMaxC:    data.Daily.TemperatureMax[i],
+			POPPercent:  data.Daily.PrecipitationProbMax[i],
+			WindSpeedMS: data.Daily.WindSpeedMax[i],
+			Condition:   weatherCodeToText(data.Daily.WeatherCode[i]),
+		})
+	}
+
+	return entries, nil
+}
+
+func parseTime(s string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02T15:04",
+		"2006-01-02",
+		time.RFC3339,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, s); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
 }
 
 func weatherCodeToText(code int) string {
