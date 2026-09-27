@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"weather-cli/internal/domain"
+	"weather-cli/internal/retry"
 )
 
 const (
@@ -71,7 +72,8 @@ type Client struct {
 func NewClient() *Client {
 	return &Client{
 		HTTPClient: &http.Client{
-			Timeout: time.Second * 5,
+			Timeout:   time.Second * 15,
+			Transport: http.DefaultTransport.(*http.Transport).Clone(),
 		},
 	}
 }
@@ -89,23 +91,28 @@ func (c *Client) geocode(ctx context.Context, city string) (name string, lat, lo
 
 	requestURL := geocodingURL + "?" + params.Encode()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
-	if err != nil {
-		return "", 0, 0, err
-	}
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", 0, 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
 	var data geocodingResponse
-	if err = json.NewDecoder(resp.Body).Decode(&data); err != nil {
+
+	err = retry.Do(ctx, 3, 250*time.Millisecond, func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		return json.NewDecoder(resp.Body).Decode(&data)
+	})
+
+	if err != nil {
 		return "", 0, 0, err
 	}
 
@@ -145,23 +152,28 @@ func (c *Client) forecast(ctx context.Context, lat, lon float64, days int) (*for
 	params.Set("daily", "temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max,weather_code")
 
 	requestURL := forecastURL + "?" + params.Encode()
-	req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
 	var data forecastResponse
-	if err = json.NewDecoder(resp.Body).Decode(&data); err != nil {
+
+	err := retry.Do(ctx, 3, 250*time.Millisecond, func() error {
+		req, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		return json.NewDecoder(resp.Body).Decode(&data)
+	})
+
+	if err != nil {
 		return nil, err
 	}
 
