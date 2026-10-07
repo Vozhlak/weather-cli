@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 	"weather-cli/internal/domain"
 )
 
@@ -81,6 +82,181 @@ func RenderToday(t domain.Today) string {
 	str.WriteString(fmt.Sprintf("  Осадки (1ч):      %.1f мм\n", t.PrecipitationMm))
 
 	return str.String()
+}
+
+func center(value string, width int) string {
+	valueWidth := utf8.RuneCountInString(value)
+
+	if valueWidth >= width {
+		return value
+	}
+
+	padding := width - valueWidth
+	left := padding / 2
+	right := padding - left
+
+	return strings.Repeat(" ", left) +
+		value +
+		strings.Repeat(" ", right)
+}
+
+func renderDivider(widths []int, indent string) string {
+	parts := make([]string, len(widths))
+
+	for i, width := range widths {
+		parts[i] = strings.Repeat("-", width)
+	}
+
+	return indent + strings.Join(parts, "-+-")
+}
+
+func RenderHourly(list []domain.HourlyEntry) string {
+	const (
+		indent    = "  "
+		timeWidth = 6
+		tempWidth = 6
+		popWidth  = 7
+		windWidth = 10
+	)
+
+	var builder strings.Builder
+
+	header := fmt.Sprintf(
+		"%s%-*s | %*s | %*s | %*s",
+		indent,
+		timeWidth, "Время",
+		tempWidth, "t°C",
+		popWidth, "Осадки",
+		windWidth, "Ветер м/с",
+	)
+
+	divider := indent + strings.Join([]string{
+		strings.Repeat("-", timeWidth),
+		strings.Repeat("-", tempWidth),
+		strings.Repeat("-", popWidth),
+		strings.Repeat("-", windWidth),
+	}, "-+-")
+
+	builder.WriteString(header)
+	builder.WriteByte('\n')
+	builder.WriteString(divider)
+
+	for _, item := range list {
+		timeValue := fmt.Sprintf(
+			"%-*s",
+			timeWidth,
+			item.Time.Format("15:04"),
+		)
+
+		tempValue := colorTemp(
+			item.TemperatureC,
+			fmt.Sprintf("%*.1f", tempWidth, item.TemperatureC),
+		)
+
+		popValue := fmt.Sprintf(
+			"%*d%%",
+			popWidth-1,
+			item.POPPercent,
+		)
+
+		windValue := fmt.Sprintf(
+			"%*.1f",
+			windWidth,
+			item.WindSpeedMS,
+		)
+
+		builder.WriteByte('\n')
+		builder.WriteString(indent)
+		builder.WriteString(strings.Join([]string{
+			timeValue,
+			tempValue,
+			popValue,
+			windValue,
+		}, " | "))
+	}
+
+	return builder.String()
+}
+
+func RenderDaily(list []domain.DailyEntry) string {
+	const indent = "  "
+
+	headers := []string{
+		"Дата",
+		"Погода",
+		"Мин°C",
+		"Макс°C",
+		"Осадки",
+	}
+
+	rows := make([][]string, 0, len(list))
+
+	for _, item := range list {
+		dateAndIcon := fmt.Sprintf(
+			"%-s %s",
+			item.Date.Format("02 Jan"),
+			iconForCondition(item.Condition),
+		)
+
+		rows = append(rows, []string{
+			dateAndIcon,
+			item.Condition,
+
+			colorTemp(item.TempMinC, fmt.Sprintf("%.1f", item.TempMinC)),
+			colorTemp(item.TempMaxC, fmt.Sprintf("%.1f", item.TempMaxC)),
+			fmt.Sprintf("%d%%", item.POPPercent),
+		})
+	}
+
+	widths := make([]int, len(headers))
+
+	for column, header := range headers {
+		widths[column] = utf8.RuneCountInString(header)
+	}
+
+	for _, row := range rows {
+		for column, value := range row {
+			valueWidth := utf8.RuneCountInString(value)
+
+			if valueWidth > widths[column] {
+				widths[column] = valueWidth
+			}
+		}
+	}
+
+	renderRow := func(values []string) string {
+		cells := make([]string, len(values))
+
+		for column, value := range values {
+			switch column {
+			case 0, 1:
+				cells[column] = fmt.Sprintf(
+					"%-*s",
+					widths[column],
+					center(value, widths[column]),
+				)
+
+			default:
+				cells[column] = fmt.Sprintf(
+					"%*s",
+					widths[column],
+					center(value, widths[column]),
+				)
+			}
+		}
+
+		return indent + strings.Join(cells, " | ")
+	}
+
+	lines := make([]string, 0, len(rows)+2)
+	lines = append(lines, renderRow(headers))
+	lines = append(lines, renderDivider(widths, indent))
+
+	for _, row := range rows {
+		lines = append(lines, renderRow(row))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 func RenderMenu() string {
