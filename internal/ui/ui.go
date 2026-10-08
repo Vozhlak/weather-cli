@@ -56,10 +56,21 @@ func Header(city string, cached bool, fetchedAt time.Time) string {
 
 	str.WriteString(fmt.Sprintf("%s%s%s", bold, city, reset))
 
-	now := time.Now()
-	diffMinutes := int(now.Sub(fetchedAt).Seconds() / 60)
+	elapsed := time.Since(fetchedAt)
 
-	str.WriteString(fmt.Sprintf(" • обновлено %d мин назад", diffMinutes))
+	switch {
+	case fetchedAt.IsZero():
+		str.WriteString(" • время обновления неизвестно")
+
+	case elapsed < time.Minute:
+		str.WriteString(" • обновлено только что")
+
+	default:
+		minutes := int(elapsed.Minutes())
+		str.WriteString(
+			fmt.Sprintf(" • обновлено %d мин назад", minutes),
+		)
+	}
 
 	if cached {
 		str.WriteString(fmt.Sprintf(" • %sиз кэша%s", gray, reset))

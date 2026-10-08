@@ -50,13 +50,17 @@ func (c *TTLCache) Get(key string) (value any, fetchedAt time.Time, ok bool) {
 	return value, fetchedAt, ok
 }
 
-func (c *TTLCache) Set(key string, value any, ttl time.Duration) {
+func (c *TTLCache) Set(key string, value any, ttl time.Duration) time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	now := time.Now()
+
 	c.m[key] = entry{
 		value:     value,
-		expiresAt: time.Now().Add(ttl),
-		fetchedAt: time.Now(),
+		expiresAt: now.Add(ttl),
+		fetchedAt: now,
 	}
+
+	return now
 }

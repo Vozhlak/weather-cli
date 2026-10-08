@@ -117,7 +117,7 @@ func (c *Client) geocode(ctx context.Context, city string) (name string, lat, lo
 	}
 
 	if len(data.Results) == 0 {
-		return "", 0, 0, fmt.Errorf("город не найден: %s", city)
+		return "", 0, 0, fmt.Errorf("город не найден")
 	}
 
 	result := data.Results[0]
