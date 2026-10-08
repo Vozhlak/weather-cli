@@ -1,7 +1,12 @@
 # Binaries
+weathercli
+*.exe
 /bin/
 /dist/
 /build/
+
+# User configuration
+config.yaml
 
 # Test / coverage
 *.out
@@ -14,7 +19,7 @@ go.work.sum
 .vscode/
 .idea/
 *.swp
-*.swo
+*.swo/
 .DS_Store
 
 # Logs
@@ -25,15 +30,9 @@ go.work.sum
 .env
 .env.*
 
+# Temporary files
+*.tmp
+.cache/
+
 # OS files
 Thumbs.db
-
-# Optional cache
-/.cache/
-
-*.exe
-*.dll
-*.so
-*.dylib
-
-*.tmp
